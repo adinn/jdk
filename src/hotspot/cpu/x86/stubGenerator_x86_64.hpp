@@ -28,6 +28,7 @@
 #include "code/codeBlob.hpp"
 #include "runtime/continuation.hpp"
 #include "runtime/stubCodeGenerator.hpp"
+#include "runtime/stubRoutines.hpp"
 
 // Stub Code definitions
 
@@ -641,7 +642,7 @@ class StubGenerator: public StubCodeGenerator {
   void generate_final_stubs();
 
  public:
-  StubGenerator(CodeBuffer* code, StubsKind kind);
+  StubGenerator(CodeBuffer* code, StubGenBlobId blob_id);
 };
 
 #endif // CPU_X86_STUBGENERATOR_X86_64_HPP
