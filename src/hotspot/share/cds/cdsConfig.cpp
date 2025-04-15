@@ -405,6 +405,9 @@ void CDSConfig::check_aot_flags() {
   if (FLAG_IS_DEFAULT(AOTCache) && AOTAdapterCaching) {
     log_info(aot,codecache,init)("AOTCache is not specified - AOTAdapterCaching is ignored");
   }
+  if (FLAG_IS_DEFAULT(AOTCache) && AOTStubCaching) {
+    log_info(aot,codecache,init)("AOTCache is not specified - AOTStubCaching is ignored");
+  }
   if (!FLAG_IS_DEFAULT(AOTCodeMaxSize)) {
     if (!is_aligned(AOTCodeMaxSize, os::vm_allocation_granularity())) {
       AOTCodeMaxSize = align_up(AOTCodeMaxSize, os::vm_allocation_granularity());

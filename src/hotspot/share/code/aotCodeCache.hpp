@@ -47,11 +47,17 @@ class AOTCodeEntry {
 public:
   enum Kind {
     None    = 0,
+    First_kind = 1,
     Adapter = 1,
-    Blob    = 2
+    SharedBlob = 2,
+    C1Blob = 3,
+    C2Blob = 4,
+    Last_kind = 4
   };
 
 private:
+  static const char* _kind_string[Last_kind+1];
+
   AOTCodeEntry* _next;
   Kind   _kind;
   uint   _id;          // Adapter's id, vmIntrinsic::ID for stub or name's hash for nmethod
@@ -100,34 +106,50 @@ public:
   bool has_oop_maps() const { return _has_oop_maps; }
   address dumptime_content_start_addr() const { return _dumptime_content_start_addr; }
 
-  static bool is_valid_entry_kind(Kind kind) { return kind == Adapter || kind == Blob; }
+  static const char* kind_string(Kind kind) { return _kind_string[(int)kind]; }
+  static bool is_valid_entry_kind(Kind kind) { return kind >= First_kind && kind <= Last_kind; }
+  static bool is_blob(Kind kind) { return kind == SharedBlob || kind == C1Blob || kind == C2Blob; }
+  static bool is_adapter(Kind kind) { return kind == Adapter; }
 };
 
 // Addresses of stubs, blobs and runtime finctions called from compiled code.
 class AOTCodeAddressTable : public CHeapObj<mtCode> {
 private:
   address* _extrs_addr;
-  address* _blobs_addr;
+  address* _stubs_addr;
+  address* _shared_blobs_addr;
+  address* _C1_blobs_addr;
   uint     _extrs_length;
-  uint     _blobs_length;
+  uint     _stubs_length;
+  uint     _shared_blobs_length;
+  uint     _C1_blobs_length;
 
   bool _extrs_complete;
+  bool _early_stubs_complete;
   bool _shared_blobs_complete;
+  bool _early_c1_complete;
   bool _complete;
 
 public:
   AOTCodeAddressTable() :
     _extrs_addr(nullptr),
-    _blobs_addr(nullptr),
+    _shared_blobs_addr(nullptr),
+    _C1_blobs_addr(nullptr),
     _extrs_length(0),
-    _blobs_length(0),
+    _stubs_length(0),
+    _shared_blobs_length(0),
+    _C1_blobs_length(0),
     _extrs_complete(false),
+    _early_stubs_complete(false),
     _shared_blobs_complete(false),
+    _early_c1_complete(false),
     _complete(false)
   { }
   ~AOTCodeAddressTable();
   void init_extrs();
+  void init_early_stubs();
   void init_shared_blobs();
+  void init_early_c1();
   const char* add_C_string(const char* str);
   int  id_for_C_string(address str);
   address address_for_C_string(int idx);
@@ -216,6 +238,7 @@ private:
   bool   _for_use;         // AOT cache is open for using AOT code
   bool   _for_dump;        // AOT cache is open for dumping AOT code
   bool   _adapter_caching;
+  bool   _stub_caching;
   bool   _closing;         // Closing cache file
   bool   _failed;          // Failed read/write to/from cache (cache is broken?)
   bool   _lookup_failed;   // Failed to lookup for info (skip only this code load)
@@ -261,7 +284,9 @@ public:
   int store_strings();
 
   static void init_extrs_table() NOT_CDS_RETURN;
+  static void init_early_stubs_table() NOT_CDS_RETURN;
   static void init_shared_blobs_table() NOT_CDS_RETURN;
+  static void init_early_c1_table() NOT_CDS_RETURN;
 
   address address_for_id(int id) const { return _table->address_for_id(id); }
 
@@ -269,6 +294,7 @@ public:
   bool for_dump() const { return _for_dump && !_failed; }
 
   bool adapter_caching() const { return _adapter_caching; }
+  bool stub_caching()    const { return _stub_caching; }
 
   bool closing()          const { return _closing; }
 
@@ -288,13 +314,13 @@ public:
   static bool store_code_blob(CodeBlob& blob,
                               AOTCodeEntry::Kind entry_kind,
                               uint id, const char* name,
-                              int entry_offset_count,
-                              int* entry_offsets) NOT_CDS_RETURN_(false);
+                              int entry_offset_count = 0,
+                              int* entry_offsets = nullptr) NOT_CDS_RETURN_(false);
 
   static CodeBlob* load_code_blob(AOTCodeEntry::Kind kind,
                                   uint id, const char* name,
-                                  int entry_offset_count,
-                                  int* entry_offsets) NOT_CDS_RETURN_(nullptr);
+                                  int entry_offset_count = 0,
+                                  int* entry_offsets = nullptr) NOT_CDS_RETURN_(nullptr);
 
   static uint store_entries_cnt() {
     if (is_on_for_dump()) {
@@ -325,8 +351,10 @@ public:
   static bool is_on_for_dump() { return is_on() && _cache->for_dump(); }
 
   static bool is_dumping_adapters() { return is_on_for_dump() && _cache->adapter_caching(); }
+  static bool is_dumping_stubs() { return is_on_for_dump() && _cache->stub_caching(); }
 
   static bool is_using_adapters()   { return is_on_for_use() && _cache->adapter_caching(); }
+  static bool is_using_stubs() { return is_on_for_use() && _cache->stub_caching(); }
 
   static const char* add_C_string(const char* str) NOT_CDS_RETURN_(str);
 
@@ -359,4 +387,34 @@ public:
 
   void fix_relocations(CodeBlob* code_blob);
 };
-#endif // SHARE_CODE_AOTCODECACH_HPP
+
+// code cache internal runtime constants area used by AOT code
+class AOTRuntimeConstants {
+ friend class AOTCodeCache;
+ private:
+  address _ccp_base;
+  static address _field_addresses_list[];
+  static AOTRuntimeConstants _aot_runtime_constants;
+  // private constructor for unique singleton
+  AOTRuntimeConstants() { }
+  // private for use by friend class AOTCodeCache
+  static void initialize_from_runtime();
+ public:
+#if INCLUDE_CDS
+  static bool contains(address adr) {
+    address base = (address)&_aot_runtime_constants;
+    address hi = base + sizeof(AOTRuntimeConstants);
+    return (base <= adr && adr < hi);
+  }
+  static address ccp_base_address() { return (address)&_aot_runtime_constants._ccp_base; }
+  static address* field_addresses_list() {
+    return _field_addresses_list;
+  } 
+#else
+  static bool contains(address adr)      { return false; }
+  static address ccp_base_address()   { return nullptr; }
+  static address* field_addresses_list() { return nullptr; }
+#endif
+};
+
+#endif // SHARE_CODE_AOTCODECACHE_HPP
